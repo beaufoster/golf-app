@@ -163,8 +163,9 @@ tr.sum td{font-weight:700;border-bottom:none;padding-top:11px}
 }
 .toggle button.on{color:var(--ink);border-color:var(--turf);box-shadow:inset 0 0 0 1px var(--turf)}
 .mapwrap{margin:12px 0 4px;display:flex;justify-content:center}
-.holemap{width:100%;max-height:46vh;height:auto;display:block}
+.holemap{width:100%;max-height:58vh;height:auto;display:block;border-radius:10px}
 .maprow{margin-top:10px;gap:28px}
+.maplegend{font-size:12px;color:var(--muted);text-align:center;margin-top:10px;line-height:1.45}
 .shots{margin:14px 0 2px;text-align:center}
 .logshot{
   width:100%;padding:16px;border-radius:11px;background:var(--ink);color:var(--paper);
@@ -256,56 +257,88 @@ function holeView(h, me, shots){
   const toM = p => [(p[0] - lon0) * mPerLon, (p[1] - lat0) * mPerLat];
 
   const tee = toM(h.cl[0]);
-  const gc = toM(h.g.reduce((a, p) => [a[0] + p[0] / h.g.length, a[1] + p[1] / h.g.length], [0, 0]));
-  const ang = Math.atan2(gc[0] - tee[0], gc[1] - tee[1]); // bearing tee -> green
+  const gcLL = h.g.reduce((a, p) => [a[0] + p[0] / h.g.length, a[1] + p[1] / h.g.length], [0, 0]);
+  const gc = toM(gcLL);
+  const ang = Math.atan2(gc[0] - tee[0], gc[1] - tee[1]);
   const cs = Math.cos(-ang), sn = Math.sin(-ang);
-  const rot = ([x, y]) => [x * cs - y * sn, -(x * sn + y * cs)]; // y flipped: screen down is +
-
+  const rot = ([x, y]) => [x * cs - y * sn, -(x * sn + y * cs)];
   const prj = p => rot(toM(p));
-  const pts = all.map(prj);
-  if(me) pts.push(prj(me));
-  if(shots) for(const sh of shots) pts.push(prj(sh.p));
-  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
-  const pad = 14;
-  const minX = Math.min(...xs) - pad, maxX = Math.max(...xs) + pad;
-  const minY = Math.min(...ys) - pad, maxY = Math.max(...ys) + pad;
+
+  // Frame on what the golfer is about to play: their position through to the
+  // green. Showing the whole hole shrinks everything to the point of uselessness
+  // once you are halfway down the fairway.
+  let frame;
+  if(me){
+    frame = [prj(me), ...h.g.map(prj)];
+    if(shots) frame.push(...shots.map(sh => prj(sh.p)));
+  } else {
+    frame = all.map(prj);
+  }
+  const xs = frame.map(p => p[0]), ys = frame.map(p => p[1]);
+  const padX = 34, padY = 22;
+  let minX = Math.min(...xs) - padX, maxX = Math.max(...xs) + padX;
+  let minY = Math.min(...ys) - padY, maxY = Math.max(...ys) + padY;
+  // keep a sane aspect so a short pitch does not render as a letterbox
+  const w = maxX - minX, hgt = maxY - minY;
+  if(w < hgt * 0.62){ const need = (hgt * 0.62 - w) / 2; minX -= need; maxX += need; }
+  if(hgt < w * 0.85){ const need = (w * 0.85 - hgt) / 2; minY -= need; maxY += need; }
 
   const path = r => 'M' + r.map(p => { const q = prj(p); return (q[0] - minX).toFixed(1) + ' ' + (q[1] - minY).toFixed(1); }).join('L') + 'Z';
   const line = r => 'M' + r.map(p => { const q = prj(p); return (q[0] - minX).toFixed(1) + ' ' + (q[1] - minY).toFixed(1); }).join('L');
   const pt = p => { const q = prj(p); return [q[0] - minX, q[1] - minY]; };
 
-  return { w:maxX - minX, h:maxY - minY, path, line, pt };
+  return { w:maxX - minX, h:maxY - minY, path, line, pt, gcLL };
 }
 
 function mapSvg(h, me, shots){
   const v = holeView(h, me, shots);
-  const parts = [];
-  parts.push(`<rect x="0" y="0" width="${v.w}" height="${v.h}" fill="var(--rough)" rx="10"/>`);
-  for(const f of h.fw) parts.push(`<path d="${v.path(f)}" fill="var(--fairway)"/>`);
-  for(const z of h.hz) parts.push(`<path d="${v.path(z.r)}" fill="var(--water)"/>`);
-  for(const bk of h.bk) parts.push(`<path d="${v.path(bk)}" fill="var(--bunker)"/>`);
-  parts.push(`<path d="${v.line(h.cl)}" fill="none" stroke="var(--ink)" stroke-opacity=".18" stroke-width="1.2" stroke-dasharray="4 5"/>`);
-  parts.push(`<path d="${v.path(h.g)}" fill="var(--greenc)" stroke="var(--ink)" stroke-opacity=".18" stroke-width="1"/>`);
+  const P = [];
+  P.push(`<rect x="0" y="0" width="${v.w}" height="${v.h}" fill="var(--rough)" rx="10"/>`);
+  for(const f of h.fw) P.push(`<path d="${v.path(f)}" fill="var(--fairway)"/>`);
+  for(const z of h.hz) P.push(`<path d="${v.path(z.r)}" fill="var(--water)"/>`);
+  for(const bk of h.bk) P.push(`<path d="${v.path(bk)}" fill="var(--bunker)"/>`);
+  P.push(`<path d="${v.line(h.cl)}" fill="none" stroke="var(--ink)" stroke-opacity=".16" stroke-width="1.1" stroke-dasharray="4 5"/>`);
+  P.push(`<path d="${v.path(h.g)}" fill="var(--greenc)" stroke="var(--ink)" stroke-opacity=".2" stroke-width="1"/>`);
 
-  const gc = h.g.reduce((a, p) => [a[0] + p[0] / h.g.length, a[1] + p[1] / h.g.length], [0, 0]);
-  const [fx, fy] = v.pt(gc);
-  parts.push(`<g><line x1="${fx}" y1="${fy}" x2="${fx}" y2="${fy - 16}" stroke="var(--ink)" stroke-width="1.4"/>
-    <path d="M${fx} ${fy - 16} L${fx + 10} ${fy - 12.5} L${fx} ${fy - 9} Z" fill="var(--flag)"/></g>`);
+  const [fx, fy] = v.pt(v.gcLL);
+  P.push(`<line x1="${fx}" y1="${fy}" x2="${fx}" y2="${fy - 17}" stroke="var(--ink)" stroke-width="1.5"/>
+    <path d="M${fx} ${fy - 17} L${fx + 11} ${fy - 13.2} L${fx} ${fy - 9.4} Z" fill="var(--flag)"/>`);
+
+  // Carry numbers: the one thing a hole map can tell you that a yardage cannot.
+  if(me){
+    const lab = [];
+    const consider = [...h.bk.map(r => ({ r, t:'b' })), ...h.hz.map(z => ({ r:z.r, t:'w' }))];
+    for(const o of consider){
+      let near = Infinity, far = 0;
+      for(const q of o.r){ const d = dist(me, q); if(d < near) near = d; if(d > far) far = d; }
+      if(near < 18 || near > 320) continue;
+      const c = o.r.reduce((a, q) => [a[0] + q[0] / o.r.length, a[1] + q[1] / o.r.length], [0, 0]);
+      lab.push({ c, near:Math.round(near), far:Math.round(far), t:o.t });
+    }
+    lab.sort((a, b) => a.near - b.near).slice(0, 4).forEach(L => {
+      const [x, y] = v.pt(L.c);
+      const txt = `${L.near}–${L.far}`;
+      const wdt = txt.length * 4.1 + 8;
+      P.push(`<g><rect x="${x - wdt / 2}" y="${y - 7}" width="${wdt}" height="13" rx="6.5" fill="var(--card)" stroke="var(--edge)" stroke-width=".8"/>
+        <text x="${x}" y="${y + 2.4}" text-anchor="middle" font-size="7.6" font-weight="600" fill="var(--ink)">${txt}</text></g>`);
+    });
+  }
 
   if(shots && shots.length){
     const pl = shots.map(sh => v.pt(sh.p));
-    parts.push(`<path d="M${pl.map(q => q[0].toFixed(1) + ' ' + q[1].toFixed(1)).join('L')}" fill="none" stroke="var(--ink)" stroke-opacity=".5" stroke-width="1.3"/>`);
-    pl.forEach(([x, y], k) => parts.push(
-      `<circle cx="${x}" cy="${y}" r="4.6" fill="var(--card)" stroke="var(--ink)" stroke-opacity=".6" stroke-width="1.2"/>
-       <text x="${x}" y="${y + 2.6}" text-anchor="middle" font-size="6.2" font-weight="600" fill="var(--ink)">${k + 1}</text>`));
+    P.push(`<path d="M${pl.map(q => q[0].toFixed(1) + ' ' + q[1].toFixed(1)).join('L')}" fill="none" stroke="var(--ink)" stroke-opacity=".5" stroke-width="1.3"/>`);
+    pl.forEach(([x, y], k) => P.push(
+      `<circle cx="${x}" cy="${y}" r="5" fill="var(--card)" stroke="var(--ink)" stroke-opacity=".6" stroke-width="1.2"/>
+       <text x="${x}" y="${y + 2.7}" text-anchor="middle" font-size="6.6" font-weight="600" fill="var(--ink)">${k + 1}</text>`));
   }
+
   if(me){
     const [mx, my] = v.pt(me);
-    parts.push(`<circle cx="${mx}" cy="${my}" r="7" fill="var(--turf)" fill-opacity=".2"/>
-      <circle cx="${mx}" cy="${my}" r="3.4" fill="var(--turf)" stroke="var(--card)" stroke-width="1.4"/>`);
-    parts.push(`<line x1="${mx}" y1="${my}" x2="${fx}" y2="${fy}" stroke="var(--turf)" stroke-width="1" stroke-opacity=".45" stroke-dasharray="3 4"/>`);
+    P.push(`<line x1="${mx}" y1="${my}" x2="${fx}" y2="${fy}" stroke="var(--turf)" stroke-width="1.1" stroke-opacity=".5" stroke-dasharray="3 4"/>`);
+    P.push(`<circle cx="${mx}" cy="${my}" r="8" fill="var(--turf)" fill-opacity=".18"/>
+      <circle cx="${mx}" cy="${my}" r="3.8" fill="var(--turf)" stroke="var(--card)" stroke-width="1.5"/>`);
   }
-  return `<svg class="holemap" viewBox="0 0 ${v.w.toFixed(1)} ${v.h.toFixed(1)}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Layout of hole ${h.n}">${parts.join('')}</svg>`;
+  return `<svg class="holemap" viewBox="0 0 ${v.w.toFixed(1)} ${v.h.toFixed(1)}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Layout of hole ${h.n}">${P.join('')}</svg>`;
 }
 
 /* ------------------------------------------------------------------- gps */
@@ -394,7 +427,9 @@ const el = (h) => { const d = document.createElement('div'); d.innerHTML = h.tri
 function render(){
   const app = document.getElementById('app');
   app.innerHTML = '';
-  const v = S.round ? 'play' : S.view;
+  // An active round defaults to the play view, but must not trap the user there --
+  // 'card' is reachable mid-round via End round.
+  const v = (S.round && S.view !== 'card') ? 'play' : S.view;
   ({ home:viewHome, loops:viewLoops, tees:viewTees, play:viewPlay, card:viewCard, history:viewHistory }[v] || viewHome)(app);
 }
 
@@ -492,7 +527,7 @@ function viewTees(app){
     const n = S.loopIds.reduce((m, lid) => m + c.loops.find(l => l.id === lid).holes.length, 0);
     S.round = { id:String(Date.now()), courseId:S.courseId, loopIds:S.loopIds.slice(), teeId:S.teeId,
                 date:new Date().toISOString(), scores:new Array(n).fill(0), idx:0 };
-    save(); render();
+    S.view = 'play'; save(); render();
   };
   b.appendChild(go);
   const back = el('<button class="back">Back</button>');
@@ -536,6 +571,7 @@ function viewPlay(app){
     b.appendChild(el(`<div class="mapwrap">${mapSvg(hole, pos, holeShots(r, i))}</div>`));
     if(pos){
       const d = greenDistances(hole.g, pos);
+      b.appendChild(el(`<div class="maplegend">Numbers on bunkers and water are carry distances from where you stand — front to back.</div>`));
       b.appendChild(el(`<div class="fb maprow">
           <div><div class="v">${d.front}</div><div class="l">front</div></div>
           <div><div class="v" style="color:var(--flag)">${d.center}</div><div class="l">middle</div></div>
